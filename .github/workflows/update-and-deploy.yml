@@ -78,7 +78,7 @@ jobs:
       - name: Build
         env:
           # Set to '/{repo-name}/' — update if your repo has a different name
-          VITE_BASE_PATH: /beehiiv-dashboard/
+          VITE_BASE_PATH: /news-feed/
         run: npm run build
 
       # ── 7. Deploy to GitHub Pages ─────────────────────────────────────────
