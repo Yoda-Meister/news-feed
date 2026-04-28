@@ -1,0 +1,92 @@
+name: Fetch Instagram & Deploy
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub Actions runners may drift ±5–30 min at peak times.
+    - cron: '*/30 * * * *'
+  # Allow manual runs from the GitHub Actions tab — also keeps the schedule alive
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit updated instagram.json
+  pages: write      # to deploy to GitHub Pages
+  id-token: write   # required by actions/deploy-pages
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  fetch-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Python + instaloader ──────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 3. Decode Instagram session from secret ───────────────────────────
+      - name: Decode Instagram session
+        env:
+          INSTAGRAM_SESSION_B64: ${{ secrets.INSTAGRAM_SESSION_B64 }}
+        run: |
+          echo "$INSTAGRAM_SESSION_B64" | base64 --decode > /tmp/ig_session
+          chmod 600 /tmp/ig_session
+
+      # ── 4. Fetch posts ────────────────────────────────────────────────────
+      - name: Fetch Instagram posts
+        env:
+          INSTAGRAM_USERNAME: ${{ secrets.INSTAGRAM_USERNAME }}
+          INSTAGRAM_SESSION_B64: ${{ secrets.INSTAGRAM_SESSION_B64 }}
+        run: python scripts/fetch_instagram.py
+
+      # ── 5. Commit updated data back to the repo ───────────────────────────
+      - name: Commit updated instagram.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/instagram.json public/config.json
+          # Only commit if there are actual changes
+          git diff --staged --quiet || git commit -m "chore: update Instagram posts [skip ci]"
+          git push
+
+      # ── 6. Build React app ────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # Set to '/{repo-name}/' — update if your repo has a different name
+          VITE_BASE_PATH: /beehiiv-dashboard/
+        run: npm run build
+
+      # ── 7. Deploy to GitHub Pages ─────────────────────────────────────────
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
