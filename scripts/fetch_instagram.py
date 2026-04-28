@@ -30,7 +30,7 @@ OUTPUT_PATH = REPO_ROOT / "public" / "data" / "instagram.json"
 # Config
 # ---------------------------------------------------------------------------
 POSTS_PER_ACCOUNT = 15
-SLEEP_BETWEEN_ACCOUNTS = (4, 9)   # seconds, randomised
+SLEEP_BETWEEN_ACCOUNTS = (10, 20)  # seconds, randomised — generous to avoid soft-blocks
 MAX_RETRIES = 3
 RETRY_BASE_SLEEP = 60              # seconds for first retry back-off
 
@@ -107,20 +107,24 @@ def fetch_posts_for_account(
             for post in itertools.islice(profile.get_posts(), POSTS_PER_ACCOUNT):
                 posts.append(post_to_dict(post))
             return posts
-        except instaloader.exceptions.TooManyRequestsException as exc:
+        except (
+            instaloader.exceptions.TooManyRequestsException,
+            instaloader.exceptions.ProfileNotExistsException,
+            instaloader.exceptions.QueryReturnedNotFoundException,
+        ) as exc:
+            # ProfileNotExistsException / QueryReturnedNotFoundException are often
+            # transient — Instagram returns a fake 404 when soft-blocking scrapers.
+            # Retry with back-off before giving up.
             sleep_secs = RETRY_BASE_SLEEP * (2 ** (attempt - 1))
             print(
-                f"  [rate-limited] {username} attempt {attempt}/{MAX_RETRIES} "
-                f"— sleeping {sleep_secs}s ({exc})",
+                f"  [blocked/transient] {username} attempt {attempt}/{MAX_RETRIES} "
+                f"— sleeping {sleep_secs}s ({type(exc).__name__})",
                 file=sys.stderr,
             )
             if attempt == MAX_RETRIES:
                 print(f"  [skip] {username} — giving up after {MAX_RETRIES} retries", file=sys.stderr)
                 return []
             time.sleep(sleep_secs)
-        except instaloader.exceptions.ProfileNotExistsException:
-            print(f"  [skip] {username} — profile does not exist", file=sys.stderr)
-            return []
         except Exception as exc:  # noqa: BLE001
             print(f"  [error] {username}: {exc}", file=sys.stderr)
             return []
